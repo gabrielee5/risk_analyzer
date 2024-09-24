@@ -1,16 +1,18 @@
 import ccxt
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 import os
-
-# Load environment variables
-load_dotenv()
 
 def create_bybit_connection():
     exchange_class = ccxt.bybit
 
+    # Load environment variables
+    secrets = dotenv_values(".env")
+    api_key = secrets["api_key"]
+    api_secret = secrets["api_secret"]
+
     exchange_params = {
-        'apiKey': os.getenv('api_key'),
-        'secret': os.getenv('api_secret'),
+        'apiKey': api_key,
+        'secret': api_secret,
         'enableRateLimit': True,
     }
 
@@ -23,7 +25,7 @@ def test_connection(exchange):
         # Fetch the balance to test the connection
         balance = exchange.fetch_balance()
         print("Connection successful!")
-        print(f"Total BTC balance: {balance['total']['USDT']}")
+        print(f"Total USDT balance: {balance['total']['USDT']}")
     except Exception as e:
         print(f"An error occurred: {str(e)}")
 

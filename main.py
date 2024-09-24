@@ -42,6 +42,7 @@ class CryptoRiskAnalyzer:
             self.portfolio_value = balance['total']['USDT']
             self.positions = self.exchange.fetch_positions()
             print(f"Portfolio Value: ${self.portfolio_value:.2f}")
+            print(f"Portfolio Positions: ${self.positions}")
         except Exception as e:
             print(f"Error fetching account data: {str(e)}")
 
