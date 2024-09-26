@@ -1,6 +1,7 @@
 import ccxt
 from dotenv import dotenv_values
 import os
+import logging
 
 def create_bybit_connection():
     exchange_class = ccxt.bybit
@@ -29,6 +30,17 @@ def test_connection(exchange):
     except Exception as e:
         print(f"An error occurred: {str(e)}")
 
+# added to test functions
+def fetch_account_data(exchange):
+    balance = exchange.fetch_balance()
+    prova = exchange.fetchBalance()
+    portfolio_value = balance['total']['USDT']
+    positions = exchange.fetchPositions()
+    print(f"Portfolio Value: ${portfolio_value:.2f}")
+    print(f"Portfolio Positions: {positions}")
+    # print(prova)
+
 if __name__ == "__main__":
     bybit = create_bybit_connection()
     test_connection(bybit)
+    # fetch_account_data(bybit)

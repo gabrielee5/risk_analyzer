@@ -4,8 +4,6 @@ import numpy as np
 from bybit_connection import create_bybit_connection
 import matplotlib.pyplot as plt
 import logging
-import asyncio
-import aiohttp
 import os
 from functools import wraps
 from tabulate import tabulate
@@ -45,13 +43,26 @@ class CryptoRiskAnalyzer:
         self.historical_data = {}
         self.data_cache = {}
         self.risk_metrics = {}
+        self.total_pnl = 0
+        self.total_equity = 0
 
+    # DATA
     @error_handler
     def fetch_account_data(self):
-        balance = self.exchange.fetch_balance()
-        self.portfolio_value = balance['total']['USDT']
-        self.positions = self.exchange.fetch_positions()
-        logging.info(f"Portfolio Value: ${self.portfolio_value:.2f}")
+        balance = self.exchange.fetchBalance()
+        usdt_data = next((coin for coin in balance['info']['result']['list'][0]['coin'] if coin['coin'] == 'USDT'), None)
+        
+        if usdt_data:
+            self.total_equity = float(usdt_data['equity'])
+            self.total_pnl = float(usdt_data['unrealisedPnl'])
+        else:
+            logging.error("USDT data not found in balance information")
+            self.total_equity = 0
+            self.total_pnl = 0
+
+        self.positions = self.exchange.fetchPositions()
+        logging.info(f"Portfolio Value: ${self.total_equity:.2f}")
+        logging.info(f"Unrealized PnL: ${self.total_pnl:.2f}")
         # logging.info(f"Portfolio Positions: {self.positions}")
 
     @error_handler
@@ -68,6 +79,7 @@ class CryptoRiskAnalyzer:
         self.data_cache[cache_key] = {'data': df, 'timestamp': pd.Timestamp.now()}
         return df
 
+    # CALCULATIONS
     def calculate_portfolio_returns(self):
         symbol = list(self.historical_data.keys())[0]
         prices = self.historical_data[symbol]['close'].values
@@ -149,20 +161,19 @@ class CryptoRiskAnalyzer:
 
     def calculate_leverage_ratio(self):
         total_position_value = sum(abs(float(position['notional'])) for position in self.positions)
-        leverage_ratio = total_position_value / self.portfolio_value
+        leverage_ratio = total_position_value / self.total_equity
         logging.info(f"Leverage Ratio: {leverage_ratio:.2f}")
         return leverage_ratio
 
     def calculate_liquidation_risk(self):
         for position in self.positions:
-            entry_price = float(position['entryPrice'])
             current_price = float(position['markPrice'])
-            leverage = float(position['leverage'])
-            liquidation_price = entry_price * (1 - 1/leverage)
+            liquidation_price = float(position['liquidationPrice'])
             risk_percentage = (current_price - liquidation_price) / current_price
             logging.info(f"Liquidation Risk for {position['symbol']}: {risk_percentage*100:.2f}%")
             yield {'symbol': position['symbol'], 'risk_percentage': risk_percentage}
 
+    # PLOTS
     def plot_portfolio_performance(self):
         returns = self.calculate_portfolio_returns()
         cumulative_returns = (1 + returns).cumprod()
@@ -203,6 +214,7 @@ class CryptoRiskAnalyzer:
         plt.savefig(os.path.join(plots_folder, 'portfolio_drawdown.png'))
         plt.close()
 
+    # REPORT
     def generate_risk_report(self):
         print("\n--- Crypto Risk Analysis Report ---")
         print(f"Date: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -220,19 +232,14 @@ class CryptoRiskAnalyzer:
         self.risk_metrics['Calmar'] = self.calculate_calmar_ratio()
         self.risk_metrics['Leverage'] = self.calculate_leverage_ratio()
 
-        self.print_portfolio_summary()
-        self.print_risk_metrics()
         self.print_position_details()
+        self.print_risk_metrics()
         
         self.plot_portfolio_performance()
         self.plot_drawdown()
 
-    def print_portfolio_summary(self):
-        print(f"Portfolio Value: ${self.portfolio_value:.2f}")
-        print(f"Number of Positions: {len(self.positions)}\n")
-
     def print_risk_metrics(self):
-        print("Risk Metrics:")
+        print("\nRisk Metrics:")
         metrics_table = [
             ["Value at Risk (VaR)", f"${self.risk_metrics['VaR']:.2f}"],
             ["Expected Shortfall (ES)", f"${self.risk_metrics['ES']:.2f}"],
@@ -246,42 +253,50 @@ class CryptoRiskAnalyzer:
         print(tabulate(metrics_table, headers=["Metric", "Value"], tablefmt="grid"))
         print()
 
+    def print_account_summary(self):
+        print("\nAccount Summary:")
+        summary_table = [
+            ["Unrealized PnL", f"${self.total_pnl:.2f}"],
+            ["Total Equity", f"${self.total_equity:.2f}"],
+            ["N. Positions", len(self.positions)]
+        ]
+        print(tabulate(summary_table, headers=["Metric", "Value"], tablefmt="grid"))
+
     def print_position_details(self):
-        print("Position Details:")
+        print(f"\nPosition Details ({len(self.positions)}):")
         position_data = []
-        tot_pnl = 0
         for position in self.positions:
             symbol = position['symbol']
             side = "Long" if position['side'] == 'long' else "Short"
             size = position['contracts']
             entry_price = position['entryPrice']
             mark_price = position['markPrice']
-            unrealized_pnl = position['unrealizedPnl']
-            cur_realized_pnl = position['info'].get('curRealisedPnl', 0)  # Use .get() with a default value
-            pnl = float(unrealized_pnl) + float(cur_realized_pnl)  # Convert to float to ensure numeric addition
+            exposure = float(position['notional'])
+            unrealized_pnl = float(position['unrealizedPnl'])
             liquidation_price = position['liquidationPrice']
             liquidation_risk = (abs(float(mark_price) - float(liquidation_price)) / float(mark_price)) * 100
-            tot_pnl += pnl
 
             # Format PnL with color (green for positive, red for negative)
-            pnl_color = '\033[92m' if pnl >= 0 else '\033[91m'  # Green if positive, Red if negative
-            pnl_formatted = f"{pnl_color}${pnl:.2f}\033[0m"  # \033[0m resets the color
+            pnl_color = '\033[92m' if unrealized_pnl >= 0 else '\033[91m'  # Green if positive, Red if negative
+            pnl_formatted = f"{pnl_color}${unrealized_pnl:.2f}\033[0m"  # \033[0m resets the color
 
             position_data.append([
-                symbol, side, size, f"{entry_price:.4f}", f"{mark_price:.4f}",
+                symbol, side, f"{exposure:.2f}", f"{entry_price:.4f}", f"{mark_price:.4f}",
                 pnl_formatted, f"{liquidation_risk:.2f}%"
             ])
 
-        headers = ["Symbol", "Side", "Size", "Entry Price", "Mark Price", "PnL", "Liquidation Risk"]
+        headers = ["Symbol", "Side", "Exposure", "Entry Price", "Mark Price", "UnPnL", "Liquidation Risk"]
         print(tabulate(position_data, headers=headers, tablefmt="grid"))
         
         # Print total PnL
-        tot_pnl_color = '\033[92m' if tot_pnl >= 0 else '\033[91m'
-        print(f"\nTotal PnL: {tot_pnl_color}${tot_pnl:.2f}\033[0m")
+        tot_pnl_color = '\033[92m' if self.total_pnl >= 0 else '\033[91m'
+        print(f"\nTotal PnL: {tot_pnl_color}${self.total_pnl:.2f}\033[0m")
         
         print("\nNote: Liquidation Risk represents the percentage difference between the current price and the liquidation price.")
         print("Note: PnL includes both unrealized and current realized profit/loss.")
 
+        # Calculate and print total equity
+        self.print_account_summary()
 
 def main():
     bybit = create_bybit_connection()
