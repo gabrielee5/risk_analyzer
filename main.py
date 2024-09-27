@@ -1,12 +1,14 @@
 import ccxt
 import pandas as pd
 import numpy as np
-from bybit_connection import create_bybit_connection
 import matplotlib.pyplot as plt
 import logging
 import os
 from functools import wraps
 from tabulate import tabulate
+import sqlite3
+from dotenv import dotenv_values, load_dotenv
+import re
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -24,6 +26,53 @@ def error_handler(func):
             logging.error(f"Unexpected error in {func.__name__}: {str(e)}")
     return wrapper
 
+def load_account_credentials():
+    load_dotenv()
+    
+    account_credentials = {}
+    account_pattern = re.compile(r'(\d+)_(\w+)')
+    
+    for key, value in os.environ.items():
+        match = account_pattern.match(key)
+        if match:
+            account_id, credential_type = match.groups()
+            if account_id not in account_credentials:
+                account_credentials[account_id] = {}
+            account_credentials[account_id][credential_type] = value
+    
+    return account_credentials
+
+def create_bybit_connection(account_id):
+    credentials = load_account_credentials()
+    if account_id not in credentials:
+        raise ValueError(f"No credentials found for account ID: {account_id}")
+    
+    account_info = credentials[account_id]
+    
+    return ccxt.bybit({
+        'apiKey': account_info['api_key'],
+        'secret': account_info['api_secret'],
+        'enableRateLimit': True,
+    })
+
+class DatabaseManager:
+    def __init__(self, db_path):
+        self.db_path = db_path
+
+    def get_connection(self):
+        return sqlite3.connect(self.db_path)
+
+    def fetch_account_data(self, account_name):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM daily_reports WHERE account_name = ?", (account_name,))
+            return cursor.fetchone()
+
+    def fetch_historical_equity(self, account_name):
+        with self.get_connection() as conn:
+            query = "SELECT date, equity FROM daily_reports WHERE account_name = ? ORDER BY date"
+            return pd.read_sql_query(query, conn, params=(account_name,), index_col='date', parse_dates=['date'])
+        
 class RiskAnalyzerConfig:
     def __init__(self):
         self.var_confidence_level = 0.95
@@ -35,9 +84,11 @@ class RiskAnalyzerConfig:
         self.cache_expiry = 3600  # Cache expiry in seconds
 
 class CryptoRiskAnalyzer:
-    def __init__(self, exchange, config=None):
-        self.exchange = exchange
+    def __init__(self, config=None, db_manager=None, account_name=None, account_id=None):
+        self.exchange = create_bybit_connection(account_id)
         self.config = config or RiskAnalyzerConfig()
+        self.db_manager = db_manager
+        self.account_name = account_name
         self.portfolio_value = 0
         self.positions = []
         self.historical_data = {}
@@ -45,8 +96,8 @@ class CryptoRiskAnalyzer:
         self.risk_metrics = {}
         self.total_pnl = 0
         self.total_equity = 0
-        self.asset_weights = {}  # New attribute to store asset weights
-        self.historical_equity = None  # New attribute to store historical equity data
+        self.asset_weights = {}
+        self.historical_equity = None
 
     # DATA
     @error_handler
@@ -96,14 +147,12 @@ class CryptoRiskAnalyzer:
         self.historical_data = aligned_data
 
     # CALCULATIONS
-    def set_historical_equity(self, historical_equity):
-        # connect it to the other repo (report_generator) that has a db with useful data
-        """
-        Set the historical equity data for the account.
-        
-        :param historical_equity: pandas Series with DatetimeIndex and equity values
-        """
-        self.historical_equity = historical_equity
+    def set_historical_equity(self):
+        if self.db_manager and self.account_name:
+            self.historical_equity = self.db_manager.fetch_historical_equity(self.account_name)
+            logging.info(f"Historical equity data fetched from database for account ID: {self.account_name}")
+        else:
+            logging.warning("Database manager or account ID not provided. Unable to fetch historical equity data.")
 
     def calculate_asset_weights(self):
         total_exposure = sum(abs(float(position['notional'])) for position in self.positions)
@@ -137,17 +186,18 @@ class CryptoRiskAnalyzer:
         returns = self.historical_equity.pct_change().dropna()
         return returns
     
-    def calculate_var(self, confidence_level=0.99):
+    def calculate_var(self, confidence_level=0.95):
         returns = self.calculate_portfolio_returns()
         if returns.empty:
             logging.warning("No valid returns data for VaR calculation")
             return 0
         var = returns.quantile(1 - confidence_level)
         var_usd = abs(var * self.total_equity)
-        logging.info(f"Weighted Value at Risk (VaR) at {confidence_level*100}% confidence: ${var_usd:.2f}")
-        return var_usd
+        var_usd_value = var_usd.item() if isinstance(var_usd, pd.Series) else var_usd
+        logging.info(f"Value at Risk (VaR) at {confidence_level*100}% confidence: ${var_usd_value:.2f}")
+        return var_usd_value
 
-    def calculate_expected_shortfall(self, confidence_level=0.99):
+    def calculate_expected_shortfall(self, confidence_level=0.95):
         returns = self.calculate_portfolio_returns()
         if returns.empty:
             logging.warning("No valid returns data for ES calculation")
@@ -155,8 +205,9 @@ class CryptoRiskAnalyzer:
         var = returns.quantile(1 - confidence_level)
         es = returns[returns <= var].mean()
         es_usd = abs(es * self.total_equity)
-        logging.info(f"Weighted Expected Shortfall at {confidence_level*100}% confidence: ${es_usd:.2f}")
-        return es_usd
+        es_usd_value = es_usd.item() if isinstance(es_usd, pd.Series) else es_usd
+        logging.info(f"Weighted Expected Shortfall at {confidence_level*100}% confidence: ${es_usd_value:.2f}")
+        return es_usd_value
 
     def calculate_sharpe_ratio(self, risk_free_rate=0.1, trading_days=365):
         returns = self.calculate_portfolio_returns()
@@ -165,8 +216,9 @@ class CryptoRiskAnalyzer:
             return 0
         excess_returns = returns - risk_free_rate / trading_days
         sharpe = (excess_returns.mean() * trading_days) / (returns.std() * np.sqrt(trading_days))
-        logging.info(f"Sharpe Ratio: {sharpe:.2f}")
-        return sharpe
+        sharpe_value = sharpe.item() if isinstance(sharpe, pd.Series) else sharpe
+        logging.info(f"Sharpe Ratio: {sharpe_value:.2f}")
+        return sharpe_value
 
     def calculate_sortino_ratio(self, risk_free_rate=0.1, target_return=0, trading_days=365):
         returns = self.calculate_portfolio_returns()
@@ -177,8 +229,9 @@ class CryptoRiskAnalyzer:
         excess_return = returns.mean() * trading_days - risk_free_rate
         downside_deviation = np.sqrt(np.mean(downside_returns**2)) * np.sqrt(trading_days)
         sortino_ratio = excess_return / downside_deviation if downside_deviation != 0 else 0
-        logging.info(f"Sortino Ratio: {sortino_ratio:.2f}")
-        return sortino_ratio
+        sortino_value = sortino_ratio.item() if isinstance(sortino_ratio, pd.Series) else sortino_ratio
+        logging.info(f"Sortino Ratio: {sortino_value:.2f}")
+        return sortino_value
 
     def calculate_omega_ratio(self, threshold=0):
         returns = self.calculate_portfolio_returns()
@@ -188,7 +241,16 @@ class CryptoRiskAnalyzer:
         return_threshold = returns - threshold
         positive_returns = return_threshold[return_threshold > 0].sum()
         negative_returns = abs(return_threshold[return_threshold < 0].sum())
-        omega_ratio = positive_returns / negative_returns if negative_returns != 0 else float('inf')
+        
+        # Convert to scalar values
+        positive_returns = positive_returns.item() if isinstance(positive_returns, pd.Series) else positive_returns
+        negative_returns = negative_returns.item() if isinstance(negative_returns, pd.Series) else negative_returns
+        
+        if negative_returns != 0:
+            omega_ratio = positive_returns / negative_returns
+        else:
+            omega_ratio = float('inf')
+        
         logging.info(f"Omega Ratio: {omega_ratio:.2f}")
         return omega_ratio
 
@@ -196,17 +258,19 @@ class CryptoRiskAnalyzer:
         portfolio_returns = self.calculate_portfolio_returns()
         beta = self.calculate_beta(market_returns)
         excess_return = portfolio_returns.mean() * 252 - risk_free_rate
-        treynor_ratio = excess_return / beta
-        logging.info(f"Treynor Ratio: {treynor_ratio:.2f}")
-        return treynor_ratio
+        treynor_ratio = excess_return / beta if beta != 0 else 0
+        treynor_value = treynor_ratio.item() if isinstance(treynor_ratio, pd.Series) else treynor_ratio
+        logging.info(f"Treynor Ratio: {treynor_value:.2f}")
+        return treynor_value
 
     def calculate_beta(self, market_returns):
         portfolio_returns = self.calculate_portfolio_returns()
         covariance = np.cov(portfolio_returns, market_returns)[0][1]
         market_variance = np.var(market_returns)
-        beta = covariance / market_variance
-        logging.info(f"Portfolio Beta: {beta:.2f}")
-        return beta
+        beta = covariance / market_variance if market_variance != 0 else 0
+        beta_value = beta.item() if isinstance(beta, pd.Series) else beta
+        logging.info(f"Portfolio Beta: {beta_value:.2f}")
+        return beta_value
 
     def calculate_max_drawdown(self):
         if self.historical_equity is None or self.historical_equity.empty:
@@ -216,8 +280,9 @@ class CryptoRiskAnalyzer:
         peak = self.historical_equity.expanding(min_periods=1).max()
         drawdown = (self.historical_equity - peak) / peak
         max_drawdown = drawdown.min()
-        logging.info(f"Maximum Drawdown: {max_drawdown*100:.2f}%")
-        return max_drawdown
+        max_drawdown_value = max_drawdown.item() if isinstance(max_drawdown, pd.Series) else max_drawdown
+        logging.info(f"Maximum Drawdown: {max_drawdown_value*100:.2f}%")
+        return max_drawdown_value
 
     def calculate_calmar_ratio(self, years=3):
         returns = self.calculate_portfolio_returns()
@@ -228,8 +293,9 @@ class CryptoRiskAnalyzer:
         annualized_return = (1 + total_return) ** (365 / len(returns)) - 1
         max_drawdown = self.calculate_max_drawdown()
         calmar_ratio = annualized_return / abs(max_drawdown) if max_drawdown != 0 else 0
-        logging.info(f"Calmar Ratio: {calmar_ratio:.2f}")
-        return calmar_ratio
+        calmar_value = calmar_ratio.item() if isinstance(calmar_ratio, pd.Series) else calmar_ratio
+        logging.info(f"Calmar Ratio: {calmar_value:.2f}")
+        return calmar_value
 
     def calculate_leverage_ratio(self):
         total_position_value = sum(abs(float(position['notional'])) for position in self.positions)
@@ -247,13 +313,15 @@ class CryptoRiskAnalyzer:
 
     # PLOTS
     def plot_portfolio_performance(self):
-        returns = self.calculate_weighted_portfolio_returns()
-        cumulative_returns = (1 + returns).cumprod()
+        if self.historical_equity is None or self.historical_equity.empty:
+            logging.warning("No historical equity data available for plotting portfolio performance")
+            return
+
         plt.figure(figsize=(12, 6))
-        plt.plot(cumulative_returns.index, cumulative_returns.values)
-        plt.title('Portfolio Cumulative Returns')
+        plt.plot(self.historical_equity.index, self.historical_equity.values)
+        plt.title('Portfolio Performance')
         plt.xlabel('Date')
-        plt.ylabel('Cumulative Returns')
+        plt.ylabel('Equity')
         plt.grid(True)
         plt.tight_layout()
         
@@ -266,10 +334,12 @@ class CryptoRiskAnalyzer:
         plt.close()
 
     def plot_drawdown(self):
-        returns = self.calculate_weighted_portfolio_returns()
-        cumulative_returns = (1 + returns).cumprod()
-        peak = cumulative_returns.expanding(min_periods=1).max()
-        drawdown = (cumulative_returns / peak) - 1
+        if self.historical_equity is None or self.historical_equity.empty:
+            logging.warning("No historical equity data available for plotting drawdown")
+            return
+
+        peak = self.historical_equity.expanding(min_periods=1).max()
+        drawdown = (self.historical_equity / peak) - 1
         plt.figure(figsize=(12, 6))
         plt.plot(drawdown.index, drawdown.values)
         plt.title('Portfolio Drawdown')
@@ -292,9 +362,10 @@ class CryptoRiskAnalyzer:
         print(f"Date: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
         self.fetch_account_data()
+        self.set_historical_equity()
 
-        if self.historical_equity is None:
-            logging.warning("Historical equity data not provided. Some calculations may be less accurate.")
+        if self.historical_equity is None or self.historical_equity.empty:
+            logging.warning("Historical equity data not available. Some calculations may be less accurate.")
             for position in self.positions:
                 self.fetch_historical_data(position['symbol'])
 
@@ -374,9 +445,26 @@ class CryptoRiskAnalyzer:
         self.print_account_summary()
 
 def main():
-    bybit = create_bybit_connection()
     config = RiskAnalyzerConfig()
-    analyzer = CryptoRiskAnalyzer(bybit, config)
+    db_manager = DatabaseManager('database.db')
+    
+    # Load all account credentials
+    account_credentials = load_account_credentials()
+    
+    # Print available accounts
+    print("Available accounts:")
+    for account_id, info in account_credentials.items():
+        print(f"ID: {account_id}, Name: {info.get('name', 'Unknown')}")
+    
+    # Prompt user for account ID
+    account_id = input("Enter the account ID to analyze: ")
+    
+    if account_id not in account_credentials:
+        print(f"Error: No credentials found for account ID: {account_id}")
+        return
+    
+    selected_account_name = account_credentials[account_id].get('name', 'Unknown')
+    analyzer = CryptoRiskAnalyzer(config, db_manager, selected_account_name, account_id)
     analyzer.generate_risk_report()
 
 if __name__ == "__main__":

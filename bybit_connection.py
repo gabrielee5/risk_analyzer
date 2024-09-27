@@ -3,6 +3,8 @@ from dotenv import dotenv_values
 import os
 import logging
 
+# not in use anymore; keeping it to test other funcs
+
 def create_bybit_connection():
     exchange_class = ccxt.bybit
 
