@@ -45,6 +45,8 @@ class CryptoRiskAnalyzer:
         self.risk_metrics = {}
         self.total_pnl = 0
         self.total_equity = 0
+        self.asset_weights = {}  # New attribute to store asset weights
+        self.historical_equity = None  # New attribute to store historical equity data
 
     # DATA
     @error_handler
@@ -79,50 +81,114 @@ class CryptoRiskAnalyzer:
         self.data_cache[cache_key] = {'data': df, 'timestamp': pd.Timestamp.now()}
         return df
 
-    # CALCULATIONS
-    def calculate_portfolio_returns(self):
-        symbol = list(self.historical_data.keys())[0]
-        prices = self.historical_data[symbol]['close'].values
-        returns = np.diff(prices) / prices[:-1]
-        return pd.Series(returns, index=self.historical_data[symbol].index[1:])
+    def align_historical_data(self):
+        all_dates = pd.DatetimeIndex([])
+        for df in self.historical_data.values():
+            all_dates = all_dates.union(df.index)
+        all_dates = all_dates.sort_values()
 
-    def calculate_var(self, confidence_level=0.95):
+        aligned_data = {}
+        for symbol, df in self.historical_data.items():
+            aligned_df = df.reindex(all_dates)
+            aligned_df['close'] = aligned_df['close'].ffill()  # Forward fill missing values
+            aligned_data[symbol] = aligned_df
+
+        self.historical_data = aligned_data
+
+    # CALCULATIONS
+    def set_historical_equity(self, historical_equity):
+        # connect it to the other repo (report_generator) that has a db with useful data
+        """
+        Set the historical equity data for the account.
+        
+        :param historical_equity: pandas Series with DatetimeIndex and equity values
+        """
+        self.historical_equity = historical_equity
+
+    def calculate_asset_weights(self):
+        total_exposure = sum(abs(float(position['notional'])) for position in self.positions)
+        self.asset_weights = {
+            position['symbol']: (abs(float(position['notional'])) / total_exposure, position['side'])
+            for position in self.positions
+        }
+
+    def calculate_weighted_portfolio_returns(self):
+        self.align_historical_data()
+        all_dates = sorted(set.union(*[set(df.index) for df in self.historical_data.values()]))
+        weighted_returns = pd.Series(0, index=pd.DatetimeIndex(all_dates[1:]))
+        
+        for symbol, (weight, side) in self.asset_weights.items():
+            prices = self.historical_data[symbol]['close'].dropna()
+            returns = prices.pct_change().dropna()
+            
+            # Invert returns for short positions
+            if side == 'short':
+                returns = -returns
+            
+            weighted_returns += weight * returns.reindex(weighted_returns.index).fillna(0)
+        
+        return weighted_returns
+
+    def calculate_portfolio_returns(self):
+        if self.historical_equity is None or self.historical_equity.empty:
+            logging.warning("No historical equity data available. Using weighted returns instead.")
+            return self.calculate_weighted_portfolio_returns()
+        
+        returns = self.historical_equity.pct_change().dropna()
+        return returns
+    
+    def calculate_var(self, confidence_level=0.99):
         returns = self.calculate_portfolio_returns()
-        var = np.percentile(returns, (1 - confidence_level) * 100)
-        var_usd = abs(var * self.portfolio_value)
-        logging.info(f"Value at Risk (VaR) at {confidence_level*100}% confidence: ${var_usd:.2f}")
+        if returns.empty:
+            logging.warning("No valid returns data for VaR calculation")
+            return 0
+        var = returns.quantile(1 - confidence_level)
+        var_usd = abs(var * self.total_equity)
+        logging.info(f"Weighted Value at Risk (VaR) at {confidence_level*100}% confidence: ${var_usd:.2f}")
         return var_usd
 
-    def calculate_expected_shortfall(self, confidence_level=0.95):
+    def calculate_expected_shortfall(self, confidence_level=0.99):
         returns = self.calculate_portfolio_returns()
-        var = np.percentile(returns, (1 - confidence_level) * 100)
+        if returns.empty:
+            logging.warning("No valid returns data for ES calculation")
+            return 0
+        var = returns.quantile(1 - confidence_level)
         es = returns[returns <= var].mean()
-        es_usd = abs(es * self.portfolio_value)
-        logging.info(f"Expected Shortfall at {confidence_level*100}% confidence: ${es_usd:.2f}")
+        es_usd = abs(es * self.total_equity)
+        logging.info(f"Weighted Expected Shortfall at {confidence_level*100}% confidence: ${es_usd:.2f}")
         return es_usd
 
-    def calculate_sharpe_ratio(self, risk_free_rate=0.01):
+    def calculate_sharpe_ratio(self, risk_free_rate=0.1, trading_days=365):
         returns = self.calculate_portfolio_returns()
-        excess_returns = returns - risk_free_rate / 252
-        sharpe = (excess_returns.mean() * 252) / (returns.std() * np.sqrt(252))
+        if returns.empty:
+            logging.warning("No valid returns data for Sharpe ratio calculation")
+            return 0
+        excess_returns = returns - risk_free_rate / trading_days
+        sharpe = (excess_returns.mean() * trading_days) / (returns.std() * np.sqrt(trading_days))
         logging.info(f"Sharpe Ratio: {sharpe:.2f}")
         return sharpe
 
-    def calculate_sortino_ratio(self, risk_free_rate=0.01, target_return=0):
+    def calculate_sortino_ratio(self, risk_free_rate=0.1, target_return=0, trading_days=365):
         returns = self.calculate_portfolio_returns()
+        if returns.empty:
+            logging.warning("No valid returns data for Sortino ratio calculation")
+            return 0
         downside_returns = returns[returns < target_return]
-        excess_return = returns.mean() * 252 - risk_free_rate
-        downside_deviation = np.sqrt(np.mean(downside_returns**2)) * np.sqrt(252)
-        sortino_ratio = excess_return / downside_deviation
+        excess_return = returns.mean() * trading_days - risk_free_rate
+        downside_deviation = np.sqrt(np.mean(downside_returns**2)) * np.sqrt(trading_days)
+        sortino_ratio = excess_return / downside_deviation if downside_deviation != 0 else 0
         logging.info(f"Sortino Ratio: {sortino_ratio:.2f}")
         return sortino_ratio
 
     def calculate_omega_ratio(self, threshold=0):
         returns = self.calculate_portfolio_returns()
+        if returns.empty:
+            logging.warning("No valid returns data for Omega ratio calculation")
+            return 0
         return_threshold = returns - threshold
         positive_returns = return_threshold[return_threshold > 0].sum()
         negative_returns = abs(return_threshold[return_threshold < 0].sum())
-        omega_ratio = positive_returns / negative_returns
+        omega_ratio = positive_returns / negative_returns if negative_returns != 0 else float('inf')
         logging.info(f"Omega Ratio: {omega_ratio:.2f}")
         return omega_ratio
 
@@ -143,19 +209,25 @@ class CryptoRiskAnalyzer:
         return beta
 
     def calculate_max_drawdown(self):
-        cumulative_returns = (1 + self.calculate_portfolio_returns()).cumprod()
-        peak = cumulative_returns.expanding(min_periods=1).max()
-        drawdown = (cumulative_returns / peak) - 1
+        if self.historical_equity is None or self.historical_equity.empty:
+            logging.warning("No historical equity data available for max drawdown calculation")
+            return 0
+        
+        peak = self.historical_equity.expanding(min_periods=1).max()
+        drawdown = (self.historical_equity - peak) / peak
         max_drawdown = drawdown.min()
         logging.info(f"Maximum Drawdown: {max_drawdown*100:.2f}%")
         return max_drawdown
 
     def calculate_calmar_ratio(self, years=3):
         returns = self.calculate_portfolio_returns()
+        if returns.empty:
+            logging.warning("No valid returns data for Calmar ratio calculation")
+            return 0
         total_return = (returns + 1).prod() - 1
-        annualized_return = (1 + total_return) ** (1 / years) - 1
+        annualized_return = (1 + total_return) ** (365 / len(returns)) - 1
         max_drawdown = self.calculate_max_drawdown()
-        calmar_ratio = annualized_return / abs(max_drawdown)
+        calmar_ratio = annualized_return / abs(max_drawdown) if max_drawdown != 0 else 0
         logging.info(f"Calmar Ratio: {calmar_ratio:.2f}")
         return calmar_ratio
 
@@ -175,7 +247,7 @@ class CryptoRiskAnalyzer:
 
     # PLOTS
     def plot_portfolio_performance(self):
-        returns = self.calculate_portfolio_returns()
+        returns = self.calculate_weighted_portfolio_returns()
         cumulative_returns = (1 + returns).cumprod()
         plt.figure(figsize=(12, 6))
         plt.plot(cumulative_returns.index, cumulative_returns.values)
@@ -194,7 +266,7 @@ class CryptoRiskAnalyzer:
         plt.close()
 
     def plot_drawdown(self):
-        returns = self.calculate_portfolio_returns()
+        returns = self.calculate_weighted_portfolio_returns()
         cumulative_returns = (1 + returns).cumprod()
         peak = cumulative_returns.expanding(min_periods=1).max()
         drawdown = (cumulative_returns / peak) - 1
@@ -220,8 +292,13 @@ class CryptoRiskAnalyzer:
         print(f"Date: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
         self.fetch_account_data()
-        for position in self.positions:
-            self.fetch_historical_data(position['symbol'])
+
+        if self.historical_equity is None:
+            logging.warning("Historical equity data not provided. Some calculations may be less accurate.")
+            for position in self.positions:
+                self.fetch_historical_data(position['symbol'])
+
+        self.calculate_asset_weights()
         
         self.risk_metrics['VaR'] = self.calculate_var()
         self.risk_metrics['ES'] = self.calculate_expected_shortfall()
@@ -265,37 +342,35 @@ class CryptoRiskAnalyzer:
     def print_position_details(self):
         print(f"\nPosition Details ({len(self.positions)}):")
         position_data = []
+        self.calculate_asset_weights()
         for position in self.positions:
             symbol = position['symbol']
-            side = "Long" if position['side'] == 'long' else "Short"
-            size = position['contracts']
-            entry_price = position['entryPrice']
-            mark_price = position['markPrice']
+            side = position['side']
+            weight, _ = self.asset_weights[symbol]
             exposure = float(position['notional'])
+            entry_price = float(position['entryPrice'])
+            mark_price = float(position['markPrice'])
             unrealized_pnl = float(position['unrealizedPnl'])
-            liquidation_price = position['liquidationPrice']
-            liquidation_risk = (abs(float(mark_price) - float(liquidation_price)) / float(mark_price)) * 100
+            liquidation_price = float(position['liquidationPrice'])
+            liquidation_risk = (abs(mark_price - liquidation_price) / mark_price) * 100
 
-            # Format PnL with color (green for positive, red for negative)
-            pnl_color = '\033[92m' if unrealized_pnl >= 0 else '\033[91m'  # Green if positive, Red if negative
-            pnl_formatted = f"{pnl_color}${unrealized_pnl:.2f}\033[0m"  # \033[0m resets the color
+            pnl_color = '\033[92m' if unrealized_pnl >= 0 else '\033[91m'
+            pnl_formatted = f"{pnl_color}${unrealized_pnl:.2f}\033[0m"
 
             position_data.append([
-                symbol, side, f"{exposure:.2f}", f"{entry_price:.4f}", f"{mark_price:.4f}",
+                symbol, side, f"{exposure:.2f}", f"{weight*100:.2f}%", f"{entry_price:.4f}", f"{mark_price:.4f}",
                 pnl_formatted, f"{liquidation_risk:.2f}%"
             ])
 
-        headers = ["Symbol", "Side", "Exposure", "Entry Price", "Mark Price", "UnPnL", "Liquidation Risk"]
+        headers = ["Symbol", "Side", "Exposure", "Weight", "Entry Price", "Mark Price", "UnPnL", "Liquidation Risk"]
         print(tabulate(position_data, headers=headers, tablefmt="grid"))
         
-        # Print total PnL
         tot_pnl_color = '\033[92m' if self.total_pnl >= 0 else '\033[91m'
         print(f"\nTotal PnL: {tot_pnl_color}${self.total_pnl:.2f}\033[0m")
         
-        print("\nNote: Liquidation Risk represents the percentage difference between the current price and the liquidation price.")
-        print("Note: PnL includes both unrealized and current realized profit/loss.")
+        print("\nNote: Weight represents the proportion of the total portfolio exposure.")
+        print("Note: Liquidation Risk represents the percentage difference between the current price and the liquidation price.")
 
-        # Calculate and print total equity
         self.print_account_summary()
 
 def main():
