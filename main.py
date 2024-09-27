@@ -72,6 +72,12 @@ class DatabaseManager:
         with self.get_connection() as conn:
             query = "SELECT date, equity FROM daily_reports WHERE account_name = ? ORDER BY date"
             return pd.read_sql_query(query, conn, params=(account_name,), index_col='date', parse_dates=['date'])
+    
+    def get_date_count(self, account_name):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(DISTINCT date) FROM daily_reports WHERE account_name = ?", (account_name,))
+            return cursor.fetchone()[0]
         
 class RiskAnalyzerConfig:
     def __init__(self):
@@ -88,6 +94,7 @@ class CryptoRiskAnalyzer:
         self.exchange = create_bybit_connection(account_id)
         self.config = config or RiskAnalyzerConfig()
         self.db_manager = db_manager
+        self.days_in_db = 0
         self.account_name = account_name
         self.portfolio_value = 0
         self.positions = []
@@ -145,6 +152,12 @@ class CryptoRiskAnalyzer:
             aligned_data[symbol] = aligned_df
 
         self.historical_data = aligned_data
+
+    def count_days_in_db(self):
+        if self.db_manager:
+            self.days_in_db = self.db_manager.get_date_count(self.account_name)
+        else:
+            self.days_in_db = 0
 
     # CALCULATIONS
     def set_historical_equity(self):
@@ -363,6 +376,7 @@ class CryptoRiskAnalyzer:
 
         self.fetch_account_data()
         self.set_historical_equity()
+        self.count_days_in_db()
 
         if self.historical_equity is None or self.historical_equity.empty:
             logging.warning("Historical equity data not available. Some calculations may be less accurate.")
@@ -399,7 +413,7 @@ class CryptoRiskAnalyzer:
             ["Leverage Ratio", f"{self.risk_metrics['Leverage']:.2f}"]
         ]
         print(tabulate(metrics_table, headers=["Metric", "Value"], tablefmt="grid"))
-        print()
+        print(f"\nNote: Days in the database: {self.days_in_db}\n")
 
     def print_account_summary(self):
         print("\nAccount Summary:")
