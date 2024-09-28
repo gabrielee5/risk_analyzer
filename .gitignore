@@ -4,3 +4,4 @@ config.py
 __pycache__
 plots
 database.db
+data_csv
