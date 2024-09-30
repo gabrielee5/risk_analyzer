@@ -4,7 +4,21 @@ The goal with this project is to create a program that analysis the risk of a cr
 
 Add a .env file and its structure should be this:
 
-    api_key = "abc"
-    api_secret = "xyz"
+    001_api_key = "abc"
+    001_api_secret = "xyz"
+    001_name = "pinco"
+
+    002_api_key = "abc"
+    002_api_secret = "xyz"
+    002_name = "pallino"
 
 The ratios and other calculations are not complete and actually pretty wrong.
+
+Implemented a database integration to have the historical equity data be analyzed for the ratios and risk parameters. In this case the database is created by another repo and downloaded when needed(I probably pushed it already).
+
+# Emergency Selling
+
+Created a program that cleans the bybit account from all open positions; to be used only if you want a tabula rasa.
+
+## Bybit connection
+The file is being used only to test new functions.

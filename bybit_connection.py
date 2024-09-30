@@ -10,8 +10,8 @@ def create_bybit_connection():
 
     # Load environment variables
     secrets = dotenv_values(".env")
-    api_key = secrets["api_key"]
-    api_secret = secrets["api_secret"]
+    api_key = secrets["001_api_key"]
+    api_secret = secrets["001_api_secret"]
 
     exchange_params = {
         'apiKey': api_key,
@@ -42,7 +42,43 @@ def fetch_account_data(exchange):
     print(f"Portfolio Positions: {positions}")
     # print(prova)
 
+def calculate_max_loss(exchange):
+    positions = exchange.fetchPositions()
+    total_max_loss = 0
+    total_max_loss_long = 0
+    total_max_loss_short = 0
+
+    print("Maximum Loss for Each Position:")
+    print("--------------------------------")
+    
+    for position in positions:
+        symbol = position['symbol']
+        side = position['side']
+        mark_price = position['markPrice']
+        contracts = position['contracts']
+        liquidation_price = position['liquidationPrice']
+        notional = position['notional']
+        
+        if side == 'long':
+            max_loss = notional - (contracts * liquidation_price)
+            max_loss_2 = (mark_price - liquidation_price) * contracts
+            total_max_loss_long += max_loss_2
+        elif side == 'short':
+            max_loss = (contracts * liquidation_price) - notional
+            max_loss_2 = (liquidation_price - mark_price) * contracts
+            total_max_loss_short += max_loss_2
+        else:
+            print(f"Unknown position side for {symbol}: {side}")
+            continue
+        
+        print(f"{symbol} ({side}): ${max_loss_2:.2f}")
+        total_max_loss += max_loss_2
+    
+    print("\nTotal Maximum Loss: ${:.2f}".format(total_max_loss))
+    print("\nTotal Maximum Loss Long: ${:.2f}".format(total_max_loss_long))
+    print("\nTotal Maximum Loss Short: ${:.2f}".format(total_max_loss_short))
+
 if __name__ == "__main__":
     bybit = create_bybit_connection()
-    test_connection(bybit)
-    # fetch_account_data(bybit)
+    # test_connection(bybit)
+    calculate_max_loss(bybit)

@@ -5,3 +5,4 @@ __pycache__
 plots
 database.db
 data_csv
+.DS_Store
