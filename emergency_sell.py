@@ -2,16 +2,6 @@ from pybit.unified_trading import HTTP
 import time
 from dotenv import dotenv_values
 
-secrets = dotenv_values(".env")
-api_key = secrets["003_api_key"]
-api_secret = secrets["003_api_secret"]
-
-# Initialize the HTTP client for Bybit's spot market
-session = HTTP(
-        api_key=api_key, 
-        api_secret=api_secret
-        )
-
 def get_account_credentials():
     secrets = dotenv_values(".env")
     accounts = {}
@@ -45,7 +35,7 @@ def choose_account(accounts):
 def create_session(api_key, api_secret):
     return HTTP(api_key=api_key, api_secret=api_secret)
 
-def cancel_all_orders():
+def cancel_all_orders(session):
     response = session.cancel_all_orders(
         category="linear",
         settleCoin="USDT",
