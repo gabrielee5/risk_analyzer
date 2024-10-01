@@ -454,7 +454,7 @@ class CryptoRiskAnalyzer:
         print(f"\nTotal PnL: {tot_pnl_color}${self.total_pnl:.2f}\033[0m")
         
         print("\nNote: Weight represents the proportion of the total portfolio exposure.")
-        print("Note: Liquidation Risk represents the percentage difference between the current price and the liquidation price.")
+        print("Note: Liquidation Risk represents the movement need in the opposite direction to reach the liquidation price.")
 
         self.print_account_summary()
 
