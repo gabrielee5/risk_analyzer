@@ -1,6 +1,7 @@
+import os
 import sqlite3
 import csv
-import os
+from datetime import datetime
 
 def convert_sqlite_to_csv():
     # Set the current directory and paths
@@ -11,7 +12,24 @@ def convert_sqlite_to_csv():
     csv_folder = os.path.join(current_dir, 'data_csv')
     os.makedirs(csv_folder, exist_ok=True)
     
-    csv_path = os.path.join(csv_folder, 'output.csv')
+    # Get current date for filename
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    
+    # Function to generate filename with versioning
+    def get_filename(base_name, extension):
+        version = 1
+        while True:
+            if version == 1:
+                filename = f"{base_name}_{current_date}.{extension}"
+            else:
+                filename = f"{base_name}_{current_date}_v{version}.{extension}"
+            
+            if not os.path.exists(os.path.join(csv_folder, filename)):
+                return filename
+            version += 1
+    
+    csv_filename = get_filename("output", "csv")
+    csv_path = os.path.join(csv_folder, csv_filename)
 
     try:
         # Connect to the SQLite database
