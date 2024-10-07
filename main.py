@@ -433,6 +433,7 @@ class CryptoRiskAnalyzer:
             side = position['side']
             weight, _ = self.asset_weights[symbol]
             exposure = float(position['notional'])
+            size = float(position['contracts'])
             entry_price = float(position['entryPrice'])
             mark_price = float(position['markPrice'])
             unrealized_pnl = float(position['unrealizedPnl'])
@@ -443,11 +444,11 @@ class CryptoRiskAnalyzer:
             pnl_formatted = f"{pnl_color}${unrealized_pnl:.2f}\033[0m"
 
             position_data.append([
-                symbol, side, f"{exposure:.2f}", f"{weight*100:.2f}%", f"{entry_price:.4f}", f"{mark_price:.4f}",
+                symbol, side, f"{exposure:.2f}", f"{size:.2f}", f"{weight*100:.2f}%", f"{entry_price:.4f}", f"{mark_price:.4f}",
                 pnl_formatted, f"{liquidation_risk:.2f}%"
             ])
 
-        headers = ["Symbol", "Side", "Exposure", "Weight", "Entry Price", "Mark Price", "UnPnL", "Liquidation Risk"]
+        headers = ["Symbol", "Side", "Exposure", "Size", "Weight", "Entry Price", "Mark Price", "UnPnL", "Liquidation Risk"]
         print(tabulate(position_data, headers=headers, tablefmt="grid"))
         
         tot_pnl_color = '\033[92m' if self.total_pnl >= 0 else '\033[91m'

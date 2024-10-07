@@ -78,7 +78,11 @@ def calculate_max_loss(exchange):
     print("\nTotal Maximum Loss Long: ${:.2f}".format(total_max_loss_long))
     print("\nTotal Maximum Loss Short: ${:.2f}".format(total_max_loss_short))
 
+def fetch_positions(exchange):
+    positions = exchange.fetchPositions()
+    print(positions)
+
 if __name__ == "__main__":
     bybit = create_bybit_connection()
     # test_connection(bybit)
-    calculate_max_loss(bybit)
+    fetch_positions(bybit)
