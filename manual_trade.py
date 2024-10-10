@@ -22,9 +22,9 @@ def manual_trade(session, symbol, side, qty):
     return response
 
 if __name__ == "__main__":
-    symbol = "NEIROETHUSDT"
+    symbol = "NOTUSDT"
     side = "Sell"
-    qty = 792
+    qty = 7640
     confirmation = input(f"About to {side} {qty} {symbol}. Confirm? [y] ")
     if confirmation == "y":
         trade = manual_trade(session, symbol, side, qty)

@@ -86,4 +86,4 @@ if __name__ == "__main__":
     from_path = 'database.db'
     csv_path = convert_sqlite_to_csv(from_path)
     xlsx_path = convert_csv_to_excel(csv_path)
-    print(f"Process completed. Excel file saved at: {xlsx_path}")
+    print(f"Process completed.")
