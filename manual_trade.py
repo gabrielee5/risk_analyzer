@@ -1,9 +1,10 @@
 from pybit.unified_trading import HTTP
 from dotenv import dotenv_values
 
+account = "003"
 secrets = dotenv_values(".env")
-api_key = secrets["003_api_key"]
-api_secret = secrets["003_api_secret"]
+api_key = secrets[f"{account}_api_key"]
+api_secret = secrets[f"{account}_api_secret"]
 
 session = HTTP(
         api_key=api_key, 
@@ -21,11 +22,12 @@ def manual_trade(session, symbol, side, qty):
         )
     return response
 
+
 if __name__ == "__main__":
-    symbol = "NOTUSDT"
-    side = "Sell"
-    qty = 7640
-    confirmation = input(f"About to {side} {qty} {symbol}. Confirm? [y] ")
+    symbol = "BTCUSDT"
+    side = "Buy"
+    qty = 0.001
+    confirmation = input(f"ID: {account} - About to {side} {qty} {symbol}. Confirm? [y] ")
     if confirmation == "y":
         trade = manual_trade(session, symbol, side, qty)
         print(trade)

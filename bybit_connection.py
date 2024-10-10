@@ -2,8 +2,22 @@ import ccxt
 from dotenv import dotenv_values
 import os
 import logging
+from pybit.unified_trading import HTTP
+from tabulate import tabulate
+from datetime import datetime
 
 # not in use anymore; keeping it to test other funcs
+
+
+# Load environment variables
+secrets = dotenv_values(".env")
+api_key = secrets["001_api_key"]
+api_secret = secrets["001_api_secret"]
+
+session = HTTP(
+        api_key=api_key, 
+        api_secret=api_secret
+        )
 
 def create_bybit_connection():
     exchange_class = ccxt.bybit
@@ -78,11 +92,47 @@ def calculate_max_loss(exchange):
     print("\nTotal Maximum Loss Long: ${:.2f}".format(total_max_loss_long))
     print("\nTotal Maximum Loss Short: ${:.2f}".format(total_max_loss_short))
 
-def fetch_positions(exchange):
-    positions = exchange.fetchPositions()
-    print(positions)
+def fetch_positions(session):
+    response = session.get_positions(
+        category="linear",
+        settleCoin="USDT",
+        limit=30 # to be tested, especially if it works on unified account (without it only prints 20 positions)
+    )
+    format_open_positions(response)
+
+def format_open_positions(data):
+    # Extract the list of positions
+    positions = data['result']['list']
+    
+    # Prepare data for tabulation
+    table_data = []
+    headers = ["Symbol", "Side", "Size", "Value", "Entry Price", "Mark Price", "Liq. Price", "Unrealized PnL", "Leverage"]
+    
+    for position in positions:
+        table_data.append([
+            position['symbol'],
+            position['side'],
+            position['size'],
+            f"${float(position['positionValue']):.2f}",
+            f"${float(position['avgPrice']):.4f}",
+            f"${float(position['markPrice']):.4f}",
+            f"${float(position['liqPrice']):.4f}",
+            f"${float(position['unrealisedPnl']):.2f}",
+            position['leverage']
+        ])
+    
+    # Sort the table data by absolute value of position value (descending)
+    table_data.sort(key=lambda x: abs(float(x[3][1:])), reverse=True)
+    
+    # Print the table
+    print(f"Open Positions ({len(positions)}):")
+    print(tabulate(table_data, headers=headers, tablefmt="grid", floatfmt=".4f"))
+    
+    # Calculate and print total position value
+    total_value = sum(abs(float(position['positionValue'])) for position in positions)
+    print(f"\nTotal Position Value: ${total_value:.2f}")
 
 if __name__ == "__main__":
     bybit = create_bybit_connection()
     # test_connection(bybit)
-    fetch_positions(bybit)
+    fetch_positions(session)
