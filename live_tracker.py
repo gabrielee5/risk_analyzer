@@ -165,7 +165,7 @@ class CryptoRiskAnalyzer:
             ["Leverage Ratio", f"{self.risk_metrics['Leverage']:.2f}"],
             ["Long Exposure", f"${self.long_exposure:.2f}"],
             ["Short Exposure", f"${self.short_exposure:.2f}"],
-            ["Net Exposure", f"${self.net_exposure:.2f}"]
+            ["Net Exp/Capital", f"{(self.net_exposure / self.total_equity):.2f}"]
         ]
         print(tabulate(summary_table, headers=["Metric", "Value"], tablefmt="grid"))
 

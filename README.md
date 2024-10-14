@@ -16,7 +16,7 @@ Add a .env file and its structure should be this:
     002_api_secret = "xyz"
     002_name = "pallino"
 
-## Main 2
+## Live Tracker
 
 This file uses only live informations about an account and is actually more useful consideirng it gives an overview on the account.
 
