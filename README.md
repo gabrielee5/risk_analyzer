@@ -44,3 +44,13 @@ It is not meant to be used regularly so it is not very fancy.
 ## Bybit connection file
 
 The file is being used only to test new functions.
+
+## VaR Calculation
+
+Calculated the Value at Risk of the portfolio with the following procedure: 
+- fetches portfolio's assets historical data;
+- calculates assets' weights and portfolio leverage;
+- calculates portfolio's standard deviation;
+- and the VaR in percentage and monetary value.
+
+At first glance the value appers to be very conservative, it needs further tests.

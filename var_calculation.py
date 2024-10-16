@@ -7,6 +7,8 @@ import json
 import os
 import matplotlib.pyplot as plt
 import seaborn as sns
+from scipy import stats
+from tabulate import tabulate
 
 # to be added in the main file and to the report generator
 
@@ -66,26 +68,31 @@ def fetch_open_positions(session):
         print(f"An error occurred: {str(e)}")
         return None
     
-def calculate_portfolio_weights(positions, equity):
+def calculate_portfolio_weights(positions):
     """
     Calculate the weight of each position in the portfolio based on its exposure.
     
     :param positions: List of dictionaries containing position information
     :return: Dictionary with symbols as keys and their corresponding weights as values
     """
-    # total_exposure = sum(abs(float(position['exposure'])) for position in positions)
+    total_exposure = sum(abs(float(position['exposure'])) for position in positions)
     
     weights = {}
     for position in positions:
         symbol = position['symbol']
         exposure = abs(float(position['exposure']))
-        # weight = exposure / total_exposure
-        weight = exposure / equity
+        weight = exposure / total_exposure
+        # weight = exposure / equity
         weights[symbol] = weight
     
     return weights
 
-def fetch_historical_data(session, symbols, days=100, cache_dir='data_cache'):
+def calculate_portfolio_leverage(equity, positions):
+    total_exposure = sum(abs(float(position['exposure'])) for position in positions)
+    leverage = total_exposure / equity
+    return leverage
+
+def fetch_historical_data(session, symbols, days=30, cache_dir='data_cache'):
     try:
         end_time = int(datetime.now().timestamp() * 1000)
         start_time = int((datetime.now() - timedelta(days=days)).timestamp() * 1000)
@@ -110,7 +117,7 @@ def fetch_historical_data(session, symbols, days=100, cache_dir='data_cache'):
                     for col in ['open', 'high', 'low', 'close', 'volume', 'turnover']:
                         df[col] = df[col].astype(float)
                     historical_data[symbol] = df
-                    # print(f"Using cached data for {symbol}")
+                    print(f"Using cached data for {symbol}")
                     continue
             
             # Fetch new data from API
@@ -237,36 +244,60 @@ def calculate_portfolio_std_dev(daily_returns, portfolio_weights):
     
     return portfolio_std_dev
 
-if __name__ == "__main__":
+def calculate_value_at_risk(leverage, portfolio_std_dev, confidence_level=0.95, time_horizon=1):
+    """
+    Calculate the Value at Risk (VaR) for a portfolio using the parametric method.
+    
+    :param leverage: Leverage of the portfolio, 1 if all the capital is invested and there is no lev
+    :param portfolio_std_dev: standard deviation of the portfolio
+    :param confidence_level: Confidence level for VaR calculation (default: 0.95 for 95% confidence)
+    :param time_horizon: Time horizon for VaR in days (default: 1 day)
+    :return: VaR value in currency units
+    """
+    # Calculate z-score for the given confidence level
+    z_score = stats.norm.ppf(1 - confidence_level)
+    
+    # Calculate VaR
+    var = z_score * portfolio_std_dev * np.sqrt(time_horizon) * leverage
+    
+    return abs(var)
 
-    # Fetch and print open positions
+def value_at_risk_data():
+    confidence = 0.95
+    timeframe = 1
     open_positions = fetch_open_positions(session)
-    # print(open_positions)
-    
     equity = fetch_current_equity(session)
-
     symbols = list(set([position['symbol'] for position in open_positions]))
-    
-    portfolio_weights = calculate_portfolio_weights(open_positions, equity)
-    
+    portfolio_weights = calculate_portfolio_weights(open_positions)
     historical_data = fetch_historical_data(session, symbols)
-
+    leverage = calculate_portfolio_leverage(equity, open_positions)
+    
     if historical_data:
-        # Calculate daily returns
         daily_returns = calculate_daily_returns(historical_data, open_positions)
-        
-        # print("\nDaily Returns Summary:")
-        # print(daily_returns.describe())
-
-        # Print correlation matrix
-        print_correlation_matrix(daily_returns)
-
-        # Calculate and print portfolio standard deviation
         portfolio_std_dev = calculate_portfolio_std_dev(daily_returns, portfolio_weights)
-        print(f"\nDaily Portfolio Standard Deviation: {portfolio_std_dev:.4f}")
-        
-        # Calculate and print annualized portfolio volatility
         annualized_volatility = portfolio_std_dev * np.sqrt(365)  # Assuming 365 trading days in a year
-        print(f"Annualized Portfolio Volatility: {annualized_volatility:.4f}")
+        var = calculate_value_at_risk(leverage, portfolio_std_dev, confidence, timeframe)
+        
+        return {
+            "Confidence Level": f"{confidence*100}%",
+            "Timeframe": f"{timeframe} day",
+            "Portfolio Leverage": f"{leverage:.2f}x",
+            "Portfolio Std Dev (daily)": f"{portfolio_std_dev*100:.2f}%",
+            "Annualized Volatility": f"{annualized_volatility*100:.2f}%",
+            "Value at Risk": f"{var*100:.2f}%",
+            "Monetary VaR": f"{var*equity:.2f}"
+        }
     else:
-        print("Failed to fetch historical data.")
+        return None
+
+def create_var_table():
+    data = value_at_risk_data()
+    if data:
+        table = [[key, value] for key, value in data.items()]
+        headers = ["Metric", "Value"]
+        return tabulate(table, headers, tablefmt="grid")
+    else:
+        return "Failed to fetch historical data."
+    
+if __name__ == "__main__":
+    print(create_var_table())
