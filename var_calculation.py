@@ -20,6 +20,12 @@ session = HTTP(
         api_secret=api_secret
         )
 
+def fetch_current_equity(session):
+    response = session.get_wallet_balance(
+    accountType="UNIFIED")
+    equity = float(response['result']['list'][0]['totalEquity'])
+    return equity
+    
 def fetch_open_positions(session):
     try:
         # Fetch all open positions
@@ -60,20 +66,21 @@ def fetch_open_positions(session):
         print(f"An error occurred: {str(e)}")
         return None
     
-def calculate_portfolio_weights(positions):
+def calculate_portfolio_weights(positions, equity):
     """
     Calculate the weight of each position in the portfolio based on its exposure.
     
     :param positions: List of dictionaries containing position information
     :return: Dictionary with symbols as keys and their corresponding weights as values
     """
-    total_exposure = sum(abs(float(position['exposure'])) for position in positions)
+    # total_exposure = sum(abs(float(position['exposure'])) for position in positions)
     
     weights = {}
     for position in positions:
         symbol = position['symbol']
         exposure = abs(float(position['exposure']))
-        weight = exposure / total_exposure
+        # weight = exposure / total_exposure
+        weight = exposure / equity
         weights[symbol] = weight
     
     return weights
@@ -103,7 +110,7 @@ def fetch_historical_data(session, symbols, days=100, cache_dir='data_cache'):
                     for col in ['open', 'high', 'low', 'close', 'volume', 'turnover']:
                         df[col] = df[col].astype(float)
                     historical_data[symbol] = df
-                    print(f"Using cached data for {symbol}")
+                    # print(f"Using cached data for {symbol}")
                     continue
             
             # Fetch new data from API
@@ -147,18 +154,27 @@ def fetch_historical_data(session, symbols, days=100, cache_dir='data_cache'):
         print(f"An error occurred while fetching historical data: {str(e)}")
         return None
     
-def calculate_daily_returns(historical_data):
+def calculate_daily_returns(historical_data, positions):
     """
-    Calculate daily returns for each symbol based on closing prices.
+    Calculate daily returns for each symbol based on closing prices,
+    accounting for long and short positions.
     
     :param historical_data: Dictionary with symbols as keys and DataFrames of historical data as values
+    :param positions: List of dictionaries containing position information
     :return: DataFrame of daily returns for all symbols
     """
     all_returns = {}
     
+    # Create a dictionary to store the position side (long or short) for each symbol
+    position_sides = {position['symbol']: position['side'] for position in positions}
+    
     for symbol, data in historical_data.items():
         # Calculate daily returns
         daily_returns = data['close'].pct_change()
+        
+        # Adjust returns based on position side
+        if position_sides[symbol] == "Short":
+            daily_returns = -1 * daily_returns
         
         # Drop the first row (NaN) and reset the index
         daily_returns = daily_returns.dropna().reset_index(drop=True)
@@ -233,30 +249,25 @@ if __name__ == "__main__":
     historical_data = fetch_historical_data(session, symbols)
 
     if historical_data:
-        print("\nHistorical Data Summary:")
-        for symbol, data in historical_data.items():
-            print(f"{symbol}:")
-            print(f"  Data points: {len(data)}")
-            print(f"  Date range: {data['timestamp'].min()} to {data['timestamp'].max()}")
-            print(f"  Latest close price: ${data['close'].iloc[-1]:.2f}")
-            print()
-        
         # Calculate daily returns
-        daily_returns = calculate_daily_returns(historical_data)
+        daily_returns = calculate_daily_returns(historical_data, open_positions)
         
-        print("\nDaily Returns Summary:")
-        print(daily_returns.describe())
+        equity = fetch_current_equity(session)
+        # print("\nDaily Returns Summary:")
+        # print(daily_returns.describe())
 
-        portfolio_weights = calculate_portfolio_weights(open_positions)
+        portfolio_weights = calculate_portfolio_weights(open_positions, equity)
         # Print correlation matrix
-        # print_correlation_matrix(daily_returns)
+        print(portfolio_weights)
+        print(sum(portfolio_weights.values()))
+        print_correlation_matrix(daily_returns)
 
         # Calculate and print portfolio standard deviation
         portfolio_std_dev = calculate_portfolio_std_dev(daily_returns, portfolio_weights)
         print(f"\nPortfolio Standard Deviation: {portfolio_std_dev:.4f}")
         
         # Calculate and print annualized portfolio volatility
-        annualized_volatility = portfolio_std_dev * np.sqrt(365)  # Assuming 252 trading days in a year
+        annualized_volatility = portfolio_std_dev * np.sqrt(365)  # Assuming 365 trading days in a year
         print(f"Annualized Portfolio Volatility: {annualized_volatility:.4f}")
     else:
         print("Failed to fetch historical data.")
