@@ -242,29 +242,28 @@ if __name__ == "__main__":
     # Fetch and print open positions
     open_positions = fetch_open_positions(session)
     # print(open_positions)
+    
+    equity = fetch_current_equity(session)
 
-    # Fetch historical data for open position symbols
     symbols = list(set([position['symbol'] for position in open_positions]))
-
+    
+    portfolio_weights = calculate_portfolio_weights(open_positions, equity)
+    
     historical_data = fetch_historical_data(session, symbols)
 
     if historical_data:
         # Calculate daily returns
         daily_returns = calculate_daily_returns(historical_data, open_positions)
         
-        equity = fetch_current_equity(session)
         # print("\nDaily Returns Summary:")
         # print(daily_returns.describe())
 
-        portfolio_weights = calculate_portfolio_weights(open_positions, equity)
         # Print correlation matrix
-        print(portfolio_weights)
-        print(sum(portfolio_weights.values()))
         print_correlation_matrix(daily_returns)
 
         # Calculate and print portfolio standard deviation
         portfolio_std_dev = calculate_portfolio_std_dev(daily_returns, portfolio_weights)
-        print(f"\nPortfolio Standard Deviation: {portfolio_std_dev:.4f}")
+        print(f"\nDaily Portfolio Standard Deviation: {portfolio_std_dev:.4f}")
         
         # Calculate and print annualized portfolio volatility
         annualized_volatility = portfolio_std_dev * np.sqrt(365)  # Assuming 365 trading days in a year
