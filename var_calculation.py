@@ -9,23 +9,19 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy import stats
 from tabulate import tabulate
+from general_functions import establish_session, get_account_keys, create_table, get_account_type
 
 # to be added in the main file and to the report generator
 
-# Load environment variables
-secrets = dotenv_values(".env")
-api_key = secrets["001_api_key"]
-api_secret = secrets["001_api_secret"]
-
-session = HTTP(
-        api_key=api_key, 
-        api_secret=api_secret
-        )
-
 def fetch_current_equity(session):
+    account_type = get_account_type(session)
     response = session.get_wallet_balance(
-    accountType="UNIFIED")
-    equity = float(response['result']['list'][0]['totalEquity'])
+    accountType=account_type)
+    if account_type == "UNIFIED":
+        equity = float(response['result']['list'][0]['totalEquity'])
+    else:
+        equity = float(response['result']['list'][0]['coin'][0]['equity'])
+    
     return equity
     
 def fetch_open_positions(session):
@@ -92,7 +88,7 @@ def calculate_portfolio_leverage(equity, positions):
     leverage = total_exposure / equity
     return leverage
 
-def fetch_historical_data(session, symbols, days=30, cache_dir='data_cache'):
+def fetch_historical_data(session, symbols, days=30, timef="D", cache_dir='data_cache'):
     try:
         end_time = int(datetime.now().timestamp() * 1000)
         start_time = int((datetime.now() - timedelta(days=days)).timestamp() * 1000)
@@ -103,7 +99,7 @@ def fetch_historical_data(session, symbols, days=30, cache_dir='data_cache'):
         os.makedirs(cache_dir, exist_ok=True)
         
         for symbol in symbols:
-            cache_file = os.path.join(cache_dir, f"{symbol}_data.json")
+            cache_file = os.path.join(cache_dir, f"{symbol}_{timef}.json")
             
             # Check if cached data exists and is recent
             if os.path.exists(cache_file):
@@ -124,7 +120,7 @@ def fetch_historical_data(session, symbols, days=30, cache_dir='data_cache'):
             response = session.get_kline(
                 category="linear",
                 symbol=symbol,
-                interval="D",
+                interval=timef,
                 start=start_time,
                 end=end_time
             )
@@ -161,7 +157,7 @@ def fetch_historical_data(session, symbols, days=30, cache_dir='data_cache'):
         print(f"An error occurred while fetching historical data: {str(e)}")
         return None
     
-def calculate_daily_returns(historical_data, positions):
+def calculate_returns(historical_data, positions):
     """
     Calculate daily returns for each symbol based on closing prices,
     accounting for long and short positions.
@@ -251,7 +247,7 @@ def calculate_value_at_risk(leverage, portfolio_std_dev, confidence_level=0.95, 
     :param leverage: Leverage of the portfolio, 1 if all the capital is invested and there is no lev
     :param portfolio_std_dev: standard deviation of the portfolio
     :param confidence_level: Confidence level for VaR calculation (default: 0.95 for 95% confidence)
-    :param time_horizon: Time horizon for VaR in days (default: 1 day)
+    :param time_horizon: Time horizon for VaR in days (default: 1 day), if data is different then daily this needs mod
     :return: VaR value in currency units
     """
     # Calculate z-score for the given confidence level
@@ -262,25 +258,26 @@ def calculate_value_at_risk(leverage, portfolio_std_dev, confidence_level=0.95, 
     
     return abs(var)
 
-def value_at_risk_data():
+def value_at_risk_data(session):
     confidence = 0.95
-    timeframe = 1
+    timeframe = 24 # 24 if hourly data, 1 if daily
+    candle_size = 60 # 60 hourly, D daily
     open_positions = fetch_open_positions(session)
     equity = fetch_current_equity(session)
     symbols = list(set([position['symbol'] for position in open_positions]))
     portfolio_weights = calculate_portfolio_weights(open_positions)
-    historical_data = fetch_historical_data(session, symbols)
+    historical_data = fetch_historical_data(session, symbols, 7, candle_size)
     leverage = calculate_portfolio_leverage(equity, open_positions)
     
     if historical_data:
-        daily_returns = calculate_daily_returns(historical_data, open_positions)
-        portfolio_std_dev = calculate_portfolio_std_dev(daily_returns, portfolio_weights)
-        annualized_volatility = portfolio_std_dev * np.sqrt(365)  # Assuming 365 trading days in a year
-        var = calculate_value_at_risk(leverage, portfolio_std_dev, confidence, timeframe)
+        daily_returns = calculate_returns(historical_data, open_positions)
+        portfolio_std_dev = calculate_portfolio_std_dev(daily_returns, portfolio_weights) * np.sqrt(timeframe)
+        annualized_volatility = portfolio_std_dev * np.sqrt(365)  # Assuming 365 trading days in a year, *24 if hourly data
+        var = calculate_value_at_risk(leverage, portfolio_std_dev, confidence)
         
         return {
             "Confidence Level": f"{confidence*100}%",
-            "Timeframe": f"{timeframe} day",
+            "Candles in day": f"{timeframe}",
             "Portfolio Leverage": f"{leverage:.2f}x",
             "Portfolio Std Dev (daily)": f"{portfolio_std_dev*100:.2f}%",
             "Annualized Volatility": f"{annualized_volatility*100:.2f}%",
@@ -289,15 +286,9 @@ def value_at_risk_data():
         }
     else:
         return None
-
-def create_var_table():
-    data = value_at_risk_data()
-    if data:
-        table = [[key, value] for key, value in data.items()]
-        headers = ["Metric", "Value"]
-        return tabulate(table, headers, tablefmt="grid")
-    else:
-        return "Failed to fetch historical data."
     
 if __name__ == "__main__":
-    print(create_var_table())
+    key, secret = get_account_keys()
+    session = establish_session(key, secret)
+    data = value_at_risk_data(session)
+    print(create_table(data))
