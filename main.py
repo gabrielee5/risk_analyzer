@@ -105,6 +105,8 @@ class CryptoRiskAnalyzer:
         self.total_equity = 0
         self.asset_weights = {}
         self.historical_equity = None
+        self.long_exposure = 0
+        self.short_exposure = 0
 
     # DATA
     @error_handler
@@ -167,8 +169,17 @@ class CryptoRiskAnalyzer:
         else:
             logging.warning("Database manager or account ID not provided. Unable to fetch historical equity data.")
 
+    def calculate_exposures(self):
+        self.long_exposure = sum((float(position['contracts'])*float(position['markPrice'])) for position in self.positions if position['side'] == 'long')
+        self.short_exposure = sum((float(position['contracts'])*float(position['markPrice'])) for position in self.positions if position['side'] == 'short')
+        net_exposure = self.long_exposure - self.short_exposure
+        
+        logging.info(f"Long Exposure: ${self.long_exposure:.2f}")
+        logging.info(f"Short Exposure: ${self.short_exposure:.2f}")
+        logging.info(f"Net Exposure: ${net_exposure:.2f}")
+
     def calculate_asset_weights(self):
-        total_exposure = sum(abs(float(position['notional'])) for position in self.positions)
+        total_exposure = self.long_exposure + self.short_exposure
         self.asset_weights = {
             position['symbol']: (abs(float(position['notional'])) / total_exposure, position['side'])
             for position in self.positions
@@ -311,8 +322,8 @@ class CryptoRiskAnalyzer:
         return calmar_value
 
     def calculate_leverage_ratio(self):
-        total_position_value = sum(abs(float(position['notional'])) for position in self.positions)
-        leverage_ratio = total_position_value / self.total_equity
+        total_exposure = self.long_exposure + self.short_exposure
+        leverage_ratio = total_exposure / self.total_equity
         logging.info(f"Leverage Ratio: {leverage_ratio:.2f}")
         return leverage_ratio
 
@@ -382,7 +393,8 @@ class CryptoRiskAnalyzer:
             logging.warning("Historical equity data not available. Some calculations may be less accurate.")
             for position in self.positions:
                 self.fetch_historical_data(position['symbol'])
-
+        
+        self.calculate_exposures()
         self.calculate_asset_weights()
         
         self.risk_metrics['VaR'] = self.calculate_var()
@@ -410,7 +422,7 @@ class CryptoRiskAnalyzer:
             ["Omega Ratio", f"{self.risk_metrics['Omega']:.2f}"],
             ["Maximum Drawdown", f"{self.risk_metrics['Max Drawdown']*100:.2f}%"],
             ["Calmar Ratio", f"{self.risk_metrics['Calmar']:.2f}"],
-            ["Leverage Ratio", f"{self.risk_metrics['Leverage']:.2f}"]
+            ["Leverage Ratio", f"{self.risk_metrics['Leverage']:.2f}x"]
         ]
         print(tabulate(metrics_table, headers=["Metric", "Value"], tablefmt="grid"))
         print(f"\nNote: Days in the database: {self.days_in_db}\n")

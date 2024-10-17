@@ -113,16 +113,25 @@ class CryptoRiskAnalyzer:
         self.data_cache[cache_key] = {'data': df, 'timestamp': pd.Timestamp.now()}
         return df
 
+    def calculate_exposures(self):
+        self.long_exposure = sum((float(position['contracts'])*float(position['markPrice'])) for position in self.positions if position['side'] == 'long')
+        self.short_exposure = sum((float(position['contracts'])*float(position['markPrice'])) for position in self.positions if position['side'] == 'short')
+        self.net_exposure = self.long_exposure - self.short_exposure
+        
+        logging.info(f"Long Exposure: ${self.long_exposure:.2f}")
+        logging.info(f"Short Exposure: ${self.short_exposure:.2f}")
+        logging.info(f"Net Exposure: ${self.net_exposure:.2f}")
+
     def calculate_asset_weights(self):
-        total_exposure = sum(abs(float(position['notional'])) for position in self.positions)
+        total_exposure = self.long_exposure + self.short_exposure
         self.asset_weights = {
-            position['symbol']: (abs(float(position['notional'])) / total_exposure, position['side'])
+            position['symbol']: (abs(float(position['contracts'])*float(position['markPrice'])) / total_exposure, position['side'])
             for position in self.positions
         }
 
     def calculate_leverage_ratio(self):
-        total_position_value = sum(abs(float(position['notional'])) for position in self.positions)
-        leverage_ratio = total_position_value / self.total_equity
+        total_exposure = self.long_exposure + self.short_exposure
+        leverage_ratio = total_exposure / self.total_equity
         logging.info(f"Leverage Ratio: {leverage_ratio:.2f}")
         return leverage_ratio
 
@@ -133,15 +142,6 @@ class CryptoRiskAnalyzer:
             risk_percentage = (current_price - liquidation_price) / current_price
             logging.info(f"Liquidation Risk for {position['symbol']}: {risk_percentage*100:.2f}%")
             yield {'symbol': position['symbol'], 'risk_percentage': risk_percentage}
-
-    def calculate_exposures(self):
-        self.long_exposure = sum(float(position['notional']) for position in self.positions if position['side'] == 'long')
-        self.short_exposure = sum(float(position['notional']) for position in self.positions if position['side'] == 'short')
-        self.net_exposure = self.long_exposure - self.short_exposure
-        
-        logging.info(f"Long Exposure: ${self.long_exposure:.2f}")
-        logging.info(f"Short Exposure: ${self.short_exposure:.2f}")
-        logging.info(f"Net Exposure: ${self.net_exposure:.2f}")
         
     # REPORT
     def generate_risk_report(self):
@@ -149,8 +149,8 @@ class CryptoRiskAnalyzer:
         print(f"Date: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
         self.fetch_account_data()
-        self.calculate_asset_weights()
         self.calculate_exposures()
+        self.calculate_asset_weights()
         
         self.risk_metrics['Leverage'] = self.calculate_leverage_ratio()
 
@@ -177,7 +177,7 @@ class CryptoRiskAnalyzer:
             symbol = position['symbol']
             side = position['side']
             weight, _ = self.asset_weights[symbol]
-            exposure = float(position['notional'])
+            exposure = float(position['contracts'])*float(position['markPrice'])
             size = float(position['contracts'])
             entry_price = float(position['entryPrice'])
             mark_price = float(position['markPrice'])
