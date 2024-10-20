@@ -271,6 +271,7 @@ def value_at_risk_data(session):
     
     if historical_data:
         daily_returns = calculate_returns(historical_data, open_positions)
+        # print_correlation_matrix(daily_returns)
         portfolio_std_dev = calculate_portfolio_std_dev(daily_returns, portfolio_weights) * np.sqrt(timeframe)
         annualized_volatility = portfolio_std_dev * np.sqrt(365)  # Assuming 365 trading days in a year, *24 if hourly data
         var = calculate_value_at_risk(leverage, portfolio_std_dev, confidence)
@@ -282,7 +283,7 @@ def value_at_risk_data(session):
             "Portfolio Std Dev (daily)": f"{portfolio_std_dev*100:.2f}%",
             "Annualized Volatility": f"{annualized_volatility*100:.2f}%",
             "Value at Risk": f"{var*100:.2f}%",
-            "Monetary VaR": f"{var*equity:.2f}"
+            "Monetary VaR": f"{var*equity:.2f}$"
         }
     else:
         return None
