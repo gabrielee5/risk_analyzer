@@ -98,7 +98,8 @@ def fetch_positions(session):
         settleCoin="USDT",
         limit=30 # to be tested, especially if it works on unified account (without it only prints 20 positions)
     )
-    format_open_positions(response)
+    # format_open_positions(response)
+    print(response)
 
 def format_open_positions(data):
     # Extract the list of positions
