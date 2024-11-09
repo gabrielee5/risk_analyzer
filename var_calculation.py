@@ -218,7 +218,7 @@ def print_correlation_matrix(daily_returns):
     
     print(f"\nCorrelation matrix heatmap has been saved as '{heatmap_path}'")
 
-def calculate_portfolio_std_dev(daily_returns, portfolio_weights):
+def calculate_portfolio_std_dev(daily_returns, portfolio_weights, leverage):
     """
     Calculate the portfolio standard deviation.
     
@@ -236,11 +236,11 @@ def calculate_portfolio_std_dev(daily_returns, portfolio_weights):
     portfolio_variance = np.dot(weights.T, np.dot(cov_matrix, weights))
     
     # Calculate portfolio standard deviation
-    portfolio_std_dev = np.sqrt(portfolio_variance)
+    portfolio_std_dev = np.sqrt(portfolio_variance) * leverage
     
     return portfolio_std_dev
 
-def calculate_value_at_risk(leverage, portfolio_std_dev, confidence_level=0.95, time_horizon=1):
+def calculate_value_at_risk(portfolio_std_dev, confidence_level=0.95, time_horizon=1):
     """
     Calculate the Value at Risk (VaR) for a portfolio using the parametric method.
     
@@ -254,7 +254,7 @@ def calculate_value_at_risk(leverage, portfolio_std_dev, confidence_level=0.95, 
     z_score = stats.norm.ppf(1 - confidence_level)
     
     # Calculate VaR
-    var = z_score * portfolio_std_dev * np.sqrt(time_horizon) * leverage
+    var = z_score * portfolio_std_dev * np.sqrt(time_horizon)
     
     return abs(var)
 
@@ -272,9 +272,9 @@ def value_at_risk_data(session):
     if historical_data:
         daily_returns = calculate_returns(historical_data, open_positions)
         # print_correlation_matrix(daily_returns)
-        portfolio_std_dev = calculate_portfolio_std_dev(daily_returns, portfolio_weights) * np.sqrt(timeframe)
+        portfolio_std_dev = calculate_portfolio_std_dev(daily_returns, portfolio_weights, leverage) * np.sqrt(timeframe)
         annualized_volatility = portfolio_std_dev * np.sqrt(365)  # Assuming 365 trading days in a year, *24 if hourly data
-        var = calculate_value_at_risk(leverage, portfolio_std_dev, confidence)
+        var = calculate_value_at_risk(portfolio_std_dev, confidence)
         
         return {
             "Confidence Level": f"{confidence*100}%",
