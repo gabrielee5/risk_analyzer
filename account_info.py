@@ -27,8 +27,10 @@ def analyze_account(api_key, api_secret):
         )
 
     account_type = get_account_type(session)
-    print(f"Account Type: {account_type}")
-    
+
+    print("Raw info:")
+    print(session.get_api_key_information())
+
     balance = get_account_balance(session, account_type)
 
     print("\nAccount Information:")
