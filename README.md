@@ -32,10 +32,6 @@ Get basic info about an account. Useful for initializing a new client without kn
 
 Prints the last trades taken for a specific account. Used to double check executions.
 
-## DB Reader
-
-Converts a database file to a csv file.
-
 ## Manual Trade
 
 Manually trade on a specific account to modify a postion that is not congruent with freqtrade. In case something wrong happens.
