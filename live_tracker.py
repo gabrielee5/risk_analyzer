@@ -89,19 +89,28 @@ class CryptoRiskAnalyzer:
         usdt_data = next((coin for coin in balance['info']['result']['list'][0]['coin'] if coin['coin'] == 'USDT'), None)
         
         if usdt_data:
-            self.total_equity = float(usdt_data['equity'])
-            self.total_pnl = float(usdt_data['unrealisedPnl'])
-            self.free_equity = float(usdt_data['availableToWithdraw'])
+            # Add safe conversion function to handle empty strings
+            def safe_float(value):
+                if value is None or value == '':
+                    return 0.0
+                return float(value)
+            
+            self.total_equity = safe_float(usdt_data.get('equity'))
+            self.total_pnl = safe_float(usdt_data.get('unrealisedPnl'))
+            self.free_equity = safe_float(usdt_data.get('availableToWithdraw'))
         else:
             logging.error("USDT data not found in balance information")
             self.total_equity = 0
             self.total_pnl = 0
             self.free_equity = 0
 
-        self.positions = self.exchange.fetchPositions() # if unified account, it fetches only 20 positions
-        logging.info(f"Portfolio Value: ${self.total_equity:.2f}")
-        logging.info(f"Unrealized PnL: ${self.total_pnl:.2f}")
-        logging.info(f"Free Capital: ${self.free_equity:.2f}")
+        self.positions = self.exchange.fetchPositions()
+        
+        # Add debug logging to help identify data issues
+        # logging.debug(f"Raw USDT data: {usdt_data}")
+        # logging.info(f"Portfolio Value: ${self.total_equity:.2f}")
+        # logging.info(f"Unrealized PnL: ${self.total_pnl:.2f}")
+        # logging.info(f"Free Capital: ${self.free_equity:.2f}")
 
     @error_handler
     def fetch_historical_data(self, symbol, timeframe='1d', limit=30):
@@ -122,9 +131,9 @@ class CryptoRiskAnalyzer:
         self.short_exposure = sum((float(position['contracts'])*float(position['markPrice'])) for position in self.positions if position['side'] == 'short')
         self.net_exposure = self.long_exposure - self.short_exposure
         
-        logging.info(f"Long Exposure: ${self.long_exposure:.2f}")
-        logging.info(f"Short Exposure: ${self.short_exposure:.2f}")
-        logging.info(f"Net Exposure: ${self.net_exposure:.2f}")
+        # logging.info(f"Long Exposure: ${self.long_exposure:.2f}")
+        # logging.info(f"Short Exposure: ${self.short_exposure:.2f}")
+        # logging.info(f"Net Exposure: ${self.net_exposure:.2f}")
 
     def calculate_asset_weights(self):
         total_exposure = self.long_exposure + self.short_exposure
@@ -136,7 +145,7 @@ class CryptoRiskAnalyzer:
     def calculate_leverage_ratio(self):
         total_exposure = self.long_exposure + self.short_exposure
         leverage_ratio = total_exposure / self.total_equity
-        logging.info(f"Leverage Ratio: {leverage_ratio:.2f}")
+        # logging.info(f"Leverage Ratio: {leverage_ratio:.2f}")
         return leverage_ratio
 
     def calculate_liquidation_risk(self):
@@ -165,7 +174,7 @@ class CryptoRiskAnalyzer:
         summary_table = [
             ["Unrealized PnL", f"${self.total_pnl:.2f}"],
             ["Total Equity", f"${self.total_equity:.2f}"],
-            ["Free Capital", f"${self.free_equity:.2f}"],
+            # ["Free Capital", f"${self.free_equity:.2f}"],
             ["N. Positions", len(self.positions)],
             ["Leverage Ratio", f"{self.risk_metrics['Leverage']:.2f}"],
             ["Long Exposure", f"${self.long_exposure:.2f}"],
